@@ -48,8 +48,9 @@ class Th(Thread):
                     self.conn.send("ERR".encode())
                 self.state = 2
             else:
-                if received["command"] == "ls":
-                    self.conn.send(a)
+                if received["command"] == "get":
+                    # self.conn.send(a)
+                    sendFile(self.conn, "image.jpeg")
 
         self.conn.close()
 
@@ -59,6 +60,16 @@ class Th(Thread):
 # def handleRequest(request):
 #     a = json.loads(request)
 
+def sendFile(conn, filename):
+    f = open(filename,'rb')
+    chunk = f.read(1024)
+    while chunk:
+       conn.send(chunk)
+    #    print('Sent ',repr(l))
+       chunk = f.read(1024)
+       print(chunk)
+    f.close()
+
 
 def handleNewConnection(addr, connection):
     newThread = Th(addr, connection)
@@ -67,7 +78,7 @@ def handleNewConnection(addr, connection):
 # thread = Th(1)
 # thread.start()
 
-print(a)
+# print(a)
 
 if __name__ == "__main__":
     serverPort = 12000
