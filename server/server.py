@@ -7,6 +7,9 @@ import config
 import credentials
 import subprocess
 
+
+DEFAULT_SERVER_PORT = 2121
+
 a = subprocess.check_output(["pwd"])
 # print(a.decode(),type(a))
 
@@ -56,6 +59,7 @@ class Th(Thread):
     def resetConnection(self):
         self.state = 1
         self.client_pwd = '/'
+        self.confirmation_state = 1
     
     def returnError(self, message):
         self.status = 'ER'
@@ -73,97 +77,100 @@ class Th(Thread):
 
     def run(self):
         while True:
-            try:
-                com,arg = receiveCommand(self.conn)
-                if self.state == 1:
-                    if com == 'open':
-                        self.returnSuccess('Send credentials')
-                        self.state = 2
-                    else:
-                        self.returnError('Unexpected command')
-                elif self.state == 2:
-                    if com == 'login':
-                        r = checkCredentials(arg)
-                        if r:
-                            self.returnSuccess(self.client_pwd)
-                            self.state = 3
-                        else:
-                            self.returnError('Invalid credentials')
-                    else:
-                        self.returnError('Unexpected command')
-                elif self.state == 3:
-                    if com == 'ls':
-                        if len(arg) and not self.nameIsPresent(arg):
-                            self.returnError('Directory not found')
-                        else:
-                            lsResult = subprocess.check_output(["ls", self.mountPath(arg)]).decode()
-                            self.returnSuccess(lsResult)
-                    elif com == 'pwd':
+            com,arg = receiveCommand(self.conn)
+            if self.state == 1:
+                if com == 'login':
+                    r = checkCredentials(arg)
+                    if r:
                         self.returnSuccess(self.client_pwd)
-                    elif com == 'mkdir':
-                        if self.nameIsPresent(arg):
-                            self.returnError("Folder already exist")
-                        else:
-                            subprocess.call(['mkdir', self.mountPath(arg)])
-                            self.returnSuccess(arg)
-                    elif com == 'cd':
-                        if arg == '..' and self.client_pwd == '/':
+                        self.state = 3
+                    else:
+                        self.returnError('Invalid credentials')
+                else:
+                    self.returnError('Unexpected command')
+            elif self.state == 3:
+                if com == 'ls':
+                    if len(arg) and not self.nameIsPresent(arg):
+                        self.returnError('Directory not found')
+                    else:
+                        lsResult = subprocess.check_output(["ls", self.mountPath(arg)]).decode()
+                        self.returnSuccess(lsResult)
+                elif com == 'pwd':
+                    self.returnSuccess(self.client_pwd)
+                elif com == 'mkdir':
+                    if self.nameIsPresent(arg):
+                        self.returnError("Folder already exist")
+                    else:
+                        subprocess.call(['mkdir', self.mountPath(arg)])
+                        self.returnSuccess(arg)
+                elif com == 'cd':
+                    if arg == '..' and self.client_pwd == '/':
+                        self.returnError('Directory not found')
+                    elif arg == '..':
+                        tempDir = self.client_pwd[-1::-1]
+                        slashIndex = tempDir.index('/')
+                        tempDir = tempDir[slashIndex:]
+                        self.client_pwd = tempDir[-1::-1]
+                        if len(self.client_pwd) != 1:
+                            self.client_pwd = self.client_pwd[:-1]
+                        self.returnSuccess(self.client_pwd)
+                    else:
+                        if not self.nameIsPresent(arg):
                             self.returnError('Directory not found')
-                        elif arg == '..':
-                            tempDir = self.client_pwd[-1::-1]
-                            slashIndex = tempDir.index('/')
-                            tempDir = tempDir[slashIndex:]
-                            self.client_pwd = tempDir[-1::-1]
-                            if len(self.client_pwd) != 1:
-                                self.client_pwd = self.client_pwd[:-1]
+                        elif self.client_pwd[-1] == '/':
+                            self.client_pwd += arg 
                             self.returnSuccess(self.client_pwd)
                         else:
-                            if not self.nameIsPresent(arg):
-                                self.returnError('Directory not found')
-                            elif self.client_pwd[-1] == '/':
-                                self.client_pwd += arg 
-                                self.returnSuccess(self.client_pwd)
-                            else:
-                                self.client_pwd += '/' + arg
-                                self.returnSuccess(self.client_pwd)
-                    elif com == 'put':
-                        gRequests.add(self.addr[0], self.addr[1], "upload", self.mountPath(arg))
-                    elif com == 'get':
-                        gRequests.add(self.addr[0], self.addr[1], "download", self.mountPath(arg))
-                    elif com == 'delete':
-                        if not self.nameIsPresent(arg):
-                            self.returnError('File not found')
-                        else:
-                            a = subprocess.call(['rm', self.mountPath(arg)])
-                            self.returnSuccess('File {} deleted!'.format(arg))
-                    elif com == 'rmdir':
-                        if not self.nameIsPresent(arg):
-                            self.returnError('Folder not found')
-                        else:
-                            a = subprocess.call(['rm','-rf', self.mountPath(arg)])
-                            self.returnSuccess('Directory deleted')
-                    elif com == 'close':
-                        self.resetConnection()
-                        self.returnSuccess('Session closed')
-                    elif com == 'quit':
-                        self.returnSuccess('Connection closed')
-                        self.state = 4
+                            self.client_pwd += '/' + arg
+                            self.returnSuccess(self.client_pwd)
+                elif com == 'put':
+                    if self.nameIsPresent(arg) and self.confirmation_state == 1:
+                        self.returnError("File already exist")
+                        self.confirmation_state = 2
                     else:
-                        self.returnError('Unexpected command')
-                
-                res = self.createResponse()
-                sendResponse(self.conn, res)
-                if self.state == 4:
-                    break
-            except KeyboardInterrupt:
-                print("CTRL C DETECTED")
+                        self.returnSuccess("File transfer with override")
+                        self.confirmation_state = 1
+                        gRequests.add(self.addr[0], self.addr[1], "upload", self.mountPath(arg))
+                elif com == 'cancel_put':
+                    self.confirmation_state = 1
+                    self.returnSuccess('Upload aborted')
+                elif com == 'get':
+                    if not self.nameIsPresent(arg):
+                        self.returnError("File not found in remote server")
+                    else:
+                        gRequests.add(self.addr[0], self.addr[1], "download", self.mountPath(arg))
+                        self.returnSuccess("Request queued")
+                elif com == 'delete':
+                    if not self.nameIsPresent(arg):
+                        self.returnError('File not found')
+                    else:
+                        a = subprocess.call(['rm', self.mountPath(arg)])
+                        self.returnSuccess('File {} deleted!'.format(arg))
+                elif com == 'rmdir':
+                    if not self.nameIsPresent(arg):
+                        self.returnError('Folder not found')
+                    else:
+                        a = subprocess.call(['rm','-rf', self.mountPath(arg)])
+                        self.returnSuccess('Directory deleted')
+                elif com == 'close':
+                    self.resetConnection()
+                    self.returnSuccess('Session closed')
+                elif com == 'quit':
+                    self.returnSuccess('Connection closed')
+                    self.state = 4
+                else:
+                    self.returnError('Unexpected command')
+            
+            res = self.createResponse()
+            sendResponse(self.conn, res)
+            if self.state == 4:
                 break
 
         self.conn.close()
 
 def checkCredentials(arg):
     user,passw = arg.split(':')
-    if credentials.credentials[user] == passw:
+    if credentials.credentials.get(user) and credentials.credentials[user] == passw:
         return True
     return False
 
@@ -178,20 +185,6 @@ def receiveCommand(conn):
     a = json.loads(com)
     command,argument = a["comm"],a["arg"]
     return command,argument
-
-def receiveArgument(conn):
-    # conn.settimeout(2)
-    print("timeout padrao ",conn.gettimeout())
-    print("recebendo argumento")
-    serverResponse = ''.encode()
-    while True:
-        try:
-            res = conn.recv(1024)
-            serverResponse += res
-        except:
-            break
-        print("recebido",res.decode(), sys.getsizeof(res))
-    print("argumento decodificado: {}".format(serverResponse.decode()))
 
 class TransferWorker(Thread):
     def __init__(self, addr, connection):
@@ -210,7 +203,7 @@ class TransferWorker(Thread):
                 self.sendFile(self.conn, filename)
                 self.conn.close()
         else:
-            print("ERror")
+            print("Error")
 
     def sendFile(self, conn, filename):
         print("starting download...")
@@ -220,7 +213,6 @@ class TransferWorker(Thread):
         while (chunk):
             conn.send(chunk)
             cont += 1
-            # print('Sent ',repr(chunk))
             chunk = f.read(1024)
         f.close()
         print("Download finished...")
@@ -234,12 +226,9 @@ class TransferWorker(Thread):
             while data:
                 cont += 1
                 f.write(data)
-                # if cont == 163648:
-                    # break
-                print(cont)
                 data = conn.recv(1024)
             f.close()
-            print("Finished", cont)
+            print("Finished {} kbytes".format(cont))
 
 def handleNewConnection(addr, connection):
     newThread = Th(addr, connection)
@@ -254,7 +243,7 @@ class CommandServer(Thread):
         Thread.__init__(self)
 
     def run(self):
-        serverPort = 12000
+        serverPort = DEFAULT_SERVER_PORT
         serverSocket = socket(AF_INET,SOCK_STREAM)
         serverSocket.bind(('',serverPort))
         serverSocket.listen(2)
@@ -273,7 +262,7 @@ class TransferServer(Thread):
         Thread.__init__(self)
 
     def run(self):
-        serverPort = 12001
+        serverPort = DEFAULT_SERVER_PORT + 1
         serverSocket = socket(AF_INET,SOCK_STREAM)
         serverSocket.bind(('',serverPort))
         serverSocket.listen(2)
@@ -285,7 +274,6 @@ class TransferServer(Thread):
 
         connectionSocket.close()
 
-# if __name__ == "__main__":
 commandServer = CommandServer()
 commandServer.start()
 transferServer = TransferServer()
