@@ -10,7 +10,6 @@ import subprocess
 a = subprocess.check_output(["pwd"])
 # print(a.decode(),type(a))
 
-
 class globalRequests:
     def __init__(self):
         self.list = []
@@ -38,51 +37,78 @@ class Th(Thread):
         Thread.__init__(self)
         self.conn = conn
         self.addr = addr
-        self.state = 1
         self.server_pwd = config.BASEDIR
+        self.resetConnection()
+        self.status = ''
+        self.payload = ''
+
+    def nameIsPresent(self, filename):
+        files = subprocess.check_output(["ls", self.server_pwd + self.client_pwd]).decode().split('\n')
+        return filename in files
+    
+    def mountPath(self, filename):
+        slash = ''
+        if self.client_pwd[-1] != '/':
+            slash = '/'
+        path = self.server_pwd + self.client_pwd + slash + filename
+        return path
+
+    def resetConnection(self):
+        self.state = 1
         self.client_pwd = '/'
+    
+    def returnError(self, message):
+        self.status = 'ER'
+        self.payload = message
+    
+    def returnSuccess(self, message):
+        self.status = 'OK'
+        self.payload = message
+    
+    def createResponse(self):
+        return {
+            'status': self.status,
+            'payload': self.payload
+        }
 
     def run(self):
         while True:
             try:
                 com,arg = receiveCommand(self.conn)
-                payload = ''
-                status = 'OK'
                 if self.state == 1:
                     if com == 'open':
-                        status = 'OK'
-                        payload = 'Send credentials'
+                        self.returnSuccess('Send credentials')
                         self.state = 2
                     else:
-                        status = 'ER'
-                        payload = 'unexpected command'
+                        self.returnError('Unexpected command')
                 elif self.state == 2:
                     if com == 'login':
                         r = checkCredentials(arg)
                         if r:
-                            status = 'OK'
-                            payload = self.client_pwd
+                            self.returnSuccess(self.client_pwd)
                             self.state = 3
                         else:
-                            status = 'ER'
-                            payload = 'Invalid'
+                            self.returnError('Invalid credentials')
                     else:
-                        status = 'ER'
-                        payload = 'unexpected command'
+                        self.returnError('Unexpected command')
                 elif self.state == 3:
                     if com == 'ls':
-                        payload = subprocess.check_output(["ls", self.server_pwd + self.client_pwd]).decode()
+                        if len(arg) and not self.nameIsPresent(arg):
+                            self.returnError('Directory not found')
+                        else:
+                            lsResult = subprocess.check_output(["ls", self.mountPath(arg)]).decode()
+                            self.returnSuccess(lsResult)
                     elif com == 'pwd':
-                        payload = self.client_pwd
+                        self.returnSuccess(self.client_pwd)
                     elif com == 'mkdir':
-                        slash = ''
-                        if self.client_pwd[-1] != '/':
-                            slash = '/'
-                        subprocess.call(['mkdir',self.server_pwd + self.client_pwd + slash + arg])
-                        payload = arg
+                        if self.nameIsPresent(arg):
+                            self.returnError("Folder already exist")
+                        else:
+                            subprocess.call(['mkdir', self.mountPath(arg)])
+                            self.returnSuccess(arg)
                     elif com == 'cd':
                         if arg == '..' and self.client_pwd == '/':
-                            status = 'ER'
+                            self.returnError('Directory not found')
                         elif arg == '..':
                             tempDir = self.client_pwd[-1::-1]
                             slashIndex = tempDir.index('/')
@@ -90,59 +116,47 @@ class Th(Thread):
                             self.client_pwd = tempDir[-1::-1]
                             if len(self.client_pwd) != 1:
                                 self.client_pwd = self.client_pwd[:-1]
+                            self.returnSuccess(self.client_pwd)
                         else:
-                            files = subprocess.check_output(["ls", self.server_pwd + self.client_pwd]).decode().split('\n')
-                            print(files)
-                            if arg not in files:
-                                status = 'ER'
-                                payload = 'Folder not found'
+                            if not self.nameIsPresent(arg):
+                                self.returnError('Directory not found')
                             elif self.client_pwd[-1] == '/':
                                 self.client_pwd += arg 
+                                self.returnSuccess(self.client_pwd)
                             else:
                                 self.client_pwd += '/' + arg
-                        if status == 'OK':
-                            payload = self.client_pwd
+                                self.returnSuccess(self.client_pwd)
                     elif com == 'put':
-                        slash = ''
-                        if self.client_pwd[-1] != '/':
-                            slash = '/'
-                        gRequests.add(self.addr[0], self.addr[1], "upload", self.server_pwd + self.client_pwd + slash + arg)
+                        gRequests.add(self.addr[0], self.addr[1], "upload", self.mountPath(arg))
                     elif com == 'get':
-                        slash = ''
-                        if self.client_pwd[-1] != '/':
-                            slash = '/'
-                        gRequests.add(self.addr[0], self.addr[1], "download", self.server_pwd + self.client_pwd + slash + arg)
+                        gRequests.add(self.addr[0], self.addr[1], "download", self.mountPath(arg))
                     elif com == 'delete':
-                        slash = ''
-                        if self.client_pwd[-1] != '/':
-                            slash = '/'
-                        a = subprocess.call(['rm',self.server_pwd + self.client_pwd + slash + arg])
+                        if not self.nameIsPresent(arg):
+                            self.returnError('File not found')
+                        else:
+                            a = subprocess.call(['rm', self.mountPath(arg)])
+                            self.returnSuccess('File {} deleted!'.format(arg))
                     elif com == 'rmdir':
-                        slash = ''
-                        if self.client_pwd[-1] != '/':
-                            slash = '/'
-                        a = subprocess.call(['rm','-rf', self.server_pwd + self.client_pwd + slash + arg])
+                        if not self.nameIsPresent(arg):
+                            self.returnError('Folder not found')
+                        else:
+                            a = subprocess.call(['rm','-rf', self.mountPath(arg)])
+                            self.returnSuccess('Directory deleted')
                     elif com == 'close':
-                        self.state = 1
-                        self.client_pwd = '/'
-                        status = 'OK'
-                        payload = 'Session closed'
+                        self.resetConnection()
+                        self.returnSuccess('Session closed')
                     elif com == 'quit':
-                        status = 'OK'
-                        payload = 'Connection closed'
+                        self.returnSuccess('Connection closed')
                         self.state = 4
                     else:
-                        status = 'ER'
-                        payload = 'Unexpected command'
+                        self.returnError('Unexpected command')
                 
-                res = {
-                    'status': status,
-                    'payload': payload
-                }
+                res = self.createResponse()
                 sendResponse(self.conn, res)
                 if self.state == 4:
                     break
             except KeyboardInterrupt:
+                print("CTRL C DETECTED")
                 break
 
         self.conn.close()
