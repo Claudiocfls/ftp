@@ -3,13 +3,10 @@ from threading import Thread
 import sys
 import json
 import time
-
-credentials = {
-    "claudio":"claudio",
-    "felipe":"felipe"
-}
-
+import config
+import credentials
 import subprocess
+
 a = subprocess.check_output(["pwd"])
 # print(a.decode(),type(a))
 
@@ -22,7 +19,6 @@ class globalRequests:
         self.list.append((ip,port,mode,filename))
     
     def get(self, ip, port):
-        print("na lista", self.list, ip, port)
         for i in range(len(self.list)):
             if self.list[i][0] == ip:
                 a = self.list[i][2]
@@ -34,9 +30,6 @@ class globalRequests:
 
 gRequests = globalRequests()
 
-
-
-
 class Th(Thread):
     subtotal = 0
     def __init__ (self, addr, conn):
@@ -46,88 +39,119 @@ class Th(Thread):
         self.conn = conn
         self.addr = addr
         self.state = 1
-        self.server_pwd = subprocess.check_output(["pwd"]).decode()[:-1]
+        self.server_pwd = config.BASEDIR
         self.client_pwd = '/'
 
     def run(self):
-        sent = ""
         while True:
-            com,arg = receiveCommand(self.conn)
-            payload = ''
-            status = 'OK'
-            if com == 'ls':
-                payload = subprocess.check_output(["ls", self.server_pwd + self.client_pwd]).decode()
-            elif com == 'pwd':
-                payload = self.client_pwd
-            elif com == 'mkdir':
-                slash = ''
-                if self.client_pwd[-1] != '/':
-                    slash = '/'
-                subprocess.call(['mkdir',self.server_pwd + self.client_pwd + slash + arg])
-                payload = arg
-            elif com == 'cd':
-                if arg == '..' and self.client_pwd == '/':
-                    status = 'ER'
-                elif arg == '..':
-                    tempDir = self.client_pwd[-1::-1]
-                    slashIndex = tempDir.index('/')
-                    tempDir = tempDir[slashIndex:]
-                    self.client_pwd = tempDir[-1::-1]
-                    if len(self.client_pwd) != 1:
-                        self.client_pwd = self.client_pwd[:-1]
-                else:
-                    if self.client_pwd[-1] == '/':
-                        self.client_pwd += arg 
+            try:
+                com,arg = receiveCommand(self.conn)
+                payload = ''
+                status = 'OK'
+                if self.state == 1:
+                    if com == 'open':
+                        status = 'OK'
+                        payload = 'Send credentials'
+                        self.state = 2
                     else:
-                        self.client_pwd += '/' + arg
-                payload = self.client_pwd
-            elif com == 'put':
-                slash = ''
-                if self.client_pwd[-1] != '/':
-                    slash = '/'
-                gRequests.add(self.addr[0], self.addr[1], "upload", self.server_pwd + self.client_pwd + slash + arg)
-            elif com == 'get':
-                slash = ''
-                if self.client_pwd[-1] != '/':
-                    slash = '/'
-                gRequests.add(self.addr[0], self.addr[1], "download", self.server_pwd + self.client_pwd + slash + arg)
-            elif com == 'delete':
-                slash = ''
-                if self.client_pwd[-1] != '/':
-                    slash = '/'
-                a = subprocess.call(['rm',self.server_pwd + self.client_pwd + slash + arg])
-            elif com == 'rmdir':
-                slash = ''
-                if self.client_pwd[-1] != '/':
-                    slash = '/'
-                a = subprocess.call(['rm','-rf', self.server_pwd + self.client_pwd + slash + arg])
-            res = {
-                'status': status,
-                'payload': payload
-            }
-            sendResponse(self.conn, res)
-            # data = self.conn.recv(1024)
-            # if not data:
-            #     break 
-            # sentence = data.decode()
-            # print("Received {} from {}".format(sentence, self.addr))
-            # received = json.loads(sentence)
-            # if self.state == 1:
-            #     if received["passwd"] == credentials[received["username"]]:
-            #         self.conn.send("OKK".encode())
-            #     else:
-            #         self.conn.send("ERR".encode())
-            #     self.state = 2
-            # else:
-            #     if received["command"] == "get":
-            #         # self.conn.send(a)
-            #         gRequests.add(self.addr[0], self.addr[1], "download", "image.jpeg")
-            #         self.conn.send("OKK".encode())
-            #     elif received["command"] == "upl":
-            #         gRequests.add(self.addr[0], self.addr[1], "upload", "image.jpeg")
-            #         self.conn.send("OKK".encode())
+                        status = 'ER'
+                        payload = 'unexpected command'
+                elif self.state == 2:
+                    if com == 'login':
+                        r = checkCredentials(arg)
+                        if r:
+                            status = 'OK'
+                            payload = self.client_pwd
+                            self.state = 3
+                        else:
+                            status = 'ER'
+                            payload = 'Invalid'
+                    else:
+                        status = 'ER'
+                        payload = 'unexpected command'
+                elif self.state == 3:
+                    if com == 'ls':
+                        payload = subprocess.check_output(["ls", self.server_pwd + self.client_pwd]).decode()
+                    elif com == 'pwd':
+                        payload = self.client_pwd
+                    elif com == 'mkdir':
+                        slash = ''
+                        if self.client_pwd[-1] != '/':
+                            slash = '/'
+                        subprocess.call(['mkdir',self.server_pwd + self.client_pwd + slash + arg])
+                        payload = arg
+                    elif com == 'cd':
+                        if arg == '..' and self.client_pwd == '/':
+                            status = 'ER'
+                        elif arg == '..':
+                            tempDir = self.client_pwd[-1::-1]
+                            slashIndex = tempDir.index('/')
+                            tempDir = tempDir[slashIndex:]
+                            self.client_pwd = tempDir[-1::-1]
+                            if len(self.client_pwd) != 1:
+                                self.client_pwd = self.client_pwd[:-1]
+                        else:
+                            files = subprocess.check_output(["ls", self.server_pwd + self.client_pwd]).decode().split('\n')
+                            print(files)
+                            if arg not in files:
+                                status = 'ER'
+                                payload = 'Folder not found'
+                            elif self.client_pwd[-1] == '/':
+                                self.client_pwd += arg 
+                            else:
+                                self.client_pwd += '/' + arg
+                        if status == 'OK':
+                            payload = self.client_pwd
+                    elif com == 'put':
+                        slash = ''
+                        if self.client_pwd[-1] != '/':
+                            slash = '/'
+                        gRequests.add(self.addr[0], self.addr[1], "upload", self.server_pwd + self.client_pwd + slash + arg)
+                    elif com == 'get':
+                        slash = ''
+                        if self.client_pwd[-1] != '/':
+                            slash = '/'
+                        gRequests.add(self.addr[0], self.addr[1], "download", self.server_pwd + self.client_pwd + slash + arg)
+                    elif com == 'delete':
+                        slash = ''
+                        if self.client_pwd[-1] != '/':
+                            slash = '/'
+                        a = subprocess.call(['rm',self.server_pwd + self.client_pwd + slash + arg])
+                    elif com == 'rmdir':
+                        slash = ''
+                        if self.client_pwd[-1] != '/':
+                            slash = '/'
+                        a = subprocess.call(['rm','-rf', self.server_pwd + self.client_pwd + slash + arg])
+                    elif com == 'close':
+                        self.state = 1
+                        self.client_pwd = '/'
+                        status = 'OK'
+                        payload = 'Session closed'
+                    elif com == 'quit':
+                        status = 'OK'
+                        payload = 'Connection closed'
+                        self.state = 4
+                    else:
+                        status = 'ER'
+                        payload = 'Unexpected command'
+                
+                res = {
+                    'status': status,
+                    'payload': payload
+                }
+                sendResponse(self.conn, res)
+                if self.state == 4:
+                    break
+            except KeyboardInterrupt:
+                break
 
         self.conn.close()
+
+def checkCredentials(arg):
+    user,passw = arg.split(':')
+    if credentials.credentials[user] == passw:
+        return True
+    return False
 
 def sendResponse(conn, res):
     a = json.dumps(res)
@@ -153,12 +177,6 @@ def receiveArgument(conn):
         except:
             break
         print("recebido",res.decode(), sys.getsizeof(res))
-        # try:
-        #     resd = res.decode()
-        #     if resd == '  ':
-        #         break 
-        # except:
-        #     serverResponse += res
     print("argumento decodificado: {}".format(serverResponse.decode()))
 
 class TransferWorker(Thread):
@@ -253,15 +271,8 @@ class TransferServer(Thread):
 
         connectionSocket.close()
 
-
-
 # if __name__ == "__main__":
 commandServer = CommandServer()
 commandServer.start()
 transferServer = TransferServer()
 transferServer.start()
-
-# while True:
-#     pass
-
-

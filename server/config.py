@@ -1,0 +1,1 @@
+BASEDIR = '/home/claudio/workspace/ces-35/lab1/ftp/server/public'
