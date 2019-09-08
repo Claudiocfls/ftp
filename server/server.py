@@ -76,7 +76,7 @@ class Th(Thread):
         }
 
     def run(self):
-        while True:
+        while runThreads:
             com,arg = receiveCommand(self.conn)
             if self.state == 1:
                 if com == 'login':
@@ -155,6 +155,7 @@ class Th(Thread):
                 elif com == 'close':
                     self.resetConnection()
                     self.returnSuccess('Session closed')
+                    self.state = 4
                 elif com == 'quit':
                     self.returnSuccess('Connection closed')
                     self.state = 4
@@ -165,8 +166,9 @@ class Th(Thread):
             sendResponse(self.conn, res)
             if self.state == 4:
                 break
-
-        self.conn.close()
+            
+        if self.conn:
+            self.conn.close()
 
 def checkCredentials(arg):
     user,passw = arg.split(':')
@@ -206,7 +208,7 @@ class TransferWorker(Thread):
             print("Error")
 
     def sendFile(self, conn, filename):
-        print("starting download...")
+        print("Starting download...")
         f = open(filename, 'rb')
         chunk = f.read(1024)
         cont = 0
@@ -219,7 +221,6 @@ class TransferWorker(Thread):
     
     def receiveFile(self, conn, filename):
         with open(filename, 'wb') as f:
-            print('file opened')
             cont = 0
             print('Receiving data...')
             data = conn.recv(1024)
@@ -253,8 +254,7 @@ class CommandServer(Thread):
             handleNewConnection(addr, connectionSocket)
             connectionSocket = None
             print("New connection established from {}".format(addr))
-
-        connectionSocket.close()
+        serverSocket.close()
 
 
 class TransferServer(Thread):
@@ -267,14 +267,37 @@ class TransferServer(Thread):
         serverSocket.bind(('',serverPort))
         serverSocket.listen(2)
         print('TransferServer is running at port {}'.format(serverPort))
-        while True:
+        while runThreads:
             connectionSocket, addr = serverSocket.accept()
             handleNewTransfer(addr, connectionSocket)
             print("New connection established from {} to transfer".format(addr))
+            
+        serverSocket.close()
 
-        connectionSocket.close()
+if __name__ == '__main__':
+    runThreads = True
+    transferServer = TransferServer()
+    transferServer.daemon = True
+    transferServer.start()
 
-commandServer = CommandServer()
-commandServer.start()
-transferServer = TransferServer()
-transferServer.start()
+    serverPort = DEFAULT_SERVER_PORT
+    serverSocket = socket(AF_INET,SOCK_STREAM)
+    serverSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    serverSocket.bind(('',serverPort))
+    serverSocket.listen(2)
+    print('Server is running at port {}'.format(serverPort))
+    while True:
+        try:
+            connectionSocket, addr = serverSocket.accept()
+            handleNewConnection(addr, connectionSocket)
+            connectionSocket = None
+            print("New connection established from {}".format(addr))
+        except KeyboardInterrupt:
+            serverSocket.close()
+            runThreads = False
+            break
+
+
+# commandServer = CommandServer()
+# commandServer.daemon = True
+# commandServer.start()

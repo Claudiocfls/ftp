@@ -3,26 +3,25 @@ from getpass import getpass
 from socket import *
 import json
 import time
+import subprocess
 
 serverName = '0.0.0.0'
 serverPort = 12000
+
+DEFAULT_SERVER_NAME = '0.0.0.0'
+DEFAULT_SERVER_PORT = 2121
+DEFAULT_CLIENT_PORT = 12000
+
+serverName = ''
+serverPort = 0
+clientControlPort = 0
+clientTransferPort = 0
+
 
 def promptCredentials():
     username = input("username: ")
     passwd = getpass("password: ")
     return username+':'+passwd
-
-# def pad(a):
-#     if len(a)%2 == 0:
-#         return a
-#     else:
-#         return a + ' '
-
-# def unpad(a):
-#     if a[-1] == ' ':
-#         return a[:-1]
-#     else:
-#         return a 
 
 def sendCommand(command, argument, conn):
     packet = {
@@ -33,25 +32,21 @@ def sendCommand(command, argument, conn):
     conn.sendall(packet.encode())
     response = conn.recv(1024).decode()
     response = json.loads(response)
-    # print("respondido ",response)
     if response['status'] == 'OK':
         return True,response['payload']
     return False,response['payload']
 
-
 def openConnection(serverAddress, isTransfer = False):
     clientSocket = socket(AF_INET, SOCK_STREAM)
     clientSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-    clientPort = 13000 if not isTransfer else 13001
+    clientPort = clientControlPort if not isTransfer else clientTransferPort
     clientSocket.bind(('0.0.0.0', clientPort))
+    print(serverAddress)
     clientSocket.connect(serverAddress)
     return clientSocket
 
-# def sendToServer(conn, message):
-#     conn.send(json.dumps(message).encode())
-
 def receiveFile(filename):
-    transferSocket = openConnection((serverName, 12001), True)
+    transferSocket = openConnection((serverName, DEFAULT_SERVER_PORT+1), True)
     with open(filename, 'wb') as f:
         print('file opened')
         cont = 0
@@ -60,49 +55,67 @@ def receiveFile(filename):
         while data:
             cont += 1
             f.write(data)
-            # if cont == 163648:
-                # break
-            # print(cont)
             data = transferSocket.recv(1024)
         f.close()
-        print("acabou", cont)
+        print("Finishid")
     transferSocket.close()
 
 def sendFile(filename):
     print("Starting upload...")
-    transferSocket = openConnection((serverName, 12001), True)
+    transferSocket = openConnection((serverName, DEFAULT_SERVER_PORT+1), True)
     f = open(filename,'rb')
     chunk = f.read(1024)
     cont = 0
     while (chunk):
         transferSocket.send(chunk)
         cont += 1
-        # print('Sent ',repr(chunk))
         chunk = f.read(1024)
     f.close()
     transferSocket.close()
     print("Upload completed!", cont)
 
+def nameIsPresent(filename):
+    files = subprocess.check_output(["ls"]).decode().split('\n')
+    return filename in files
+
+def askForConfirmationForOverride():
+    answer = ''
+    answered = False 
+    while not answered:
+        option = input("Do you want override {} in your folder?(Y/N) ".format(argument))
+        if option in 'YN':
+            answer = option
+            answered = True
+    return True if answer == 'Y' else False
+
 if __name__ == "__main__":
-    # print(sys.argv)
-    clientSocket = openConnection((serverName, serverPort))
+    clientSocket = None
+    p = None
+    try:
+        p = int(sys.argv[1])
+    except:
+        pass
+    clientControlPort = int(p or DEFAULT_CLIENT_PORT)
+    clientTransferPort = clientControlPort + 1
     print(" *** File Transfer System *** ")
-    print("Control port: ", 13000)
-    print("Transfer port: ", 13001)
+    print("Control port: ", clientControlPort)
+    print("Transfer port: ",clientTransferPort)
     current_dir = '/'
     state = 'open'
     user = ''
     while True:
         if state == 'open':
             a = input("> ")
-            if a != 'open':
-                print("Session not stablished. Type 'open' to initiate a connection.")
+            try:
+                command,argument = a.split()
+            except:
+                command,argument = a,None
+            if command != 'open':
+                print("Type 'open SERVER_IP' to initiate a connection.")
             else:
-                response = sendCommand('open', '', clientSocket)
-                if response[0]:
-                    state = 'login'
-                else:
-                    print("Server says: {}".format(response[1]))
+                serverName = argument or DEFAULT_SERVER_NAME
+                clientSocket = openConnection((serverName, DEFAULT_SERVER_PORT))
+                state = 'login'
         elif state == 'login':
             credentials = promptCredentials()
             response = sendCommand('login', credentials, clientSocket)
@@ -120,23 +133,46 @@ if __name__ == "__main__":
                 command,argument = a.split()
             except:
                 command,argument = a,""
-            
-            res = sendCommand(command, argument, clientSocket)
-            if command == 'cd' and res[0]:
-                current_dir = res[1]
-            elif command == 'cd' and not res[0]:
-                print(res[1])
-            elif command == 'ls' and res[0]:
-                print(res[1],end="")
-            elif command == 'pwd' and res[0]:
-                print(res[1])
-            elif command == 'put':
-                sendFile(argument)
-            elif command == 'get':
-                receiveFile(argument)
-            elif command == 'close' and res[0]:
-                print(res[1])
-                state = 'open'
-            elif command == 'quit' and res[0]:
-                print(res[1])
-                break
+
+            if command == 'get' and nameIsPresent(argument):
+                allow = askForConfirmationForOverride()
+                if not allow:
+                    command = None
+            if command == 'put':
+                res = sendCommand(command, argument, clientSocket)
+                if not res[0]:
+                    allow = askForConfirmationForOverride()
+                    if not allow:
+                        command = 'cancel_put'
+
+            if command:
+                res = sendCommand(command, argument, clientSocket)
+                if command == 'cd' and res[0]:
+                    current_dir = res[1]
+                elif command == 'cd' and not res[0]:
+                    print(res[1])
+                elif command == 'ls' and res[0]:
+                    print(res[1],end="")
+                elif command == 'ls':
+                    print(res[1])
+                elif command == 'mkdir' and not res[0]:
+                    print(res[1])
+                elif command == 'rmdir' and not res[0]:
+                    print(res[1])
+                elif command == 'pwd' and res[0]:
+                    print(res[1])
+                elif command == 'put':
+                    sendFile(argument)
+                elif command == 'cancel_put' and res[0]:
+                    print(res[1])
+                elif command == 'get' and res[0]:
+                    receiveFile(argument)
+                elif command == 'get':
+                    print(res[1])
+                elif command == 'close' and res[0]:
+                    print(res[1])
+                    state = 'open'
+                    clientSocket.close()
+                elif command == 'quit' and res[0]:
+                    print(res[1])
+                    break
