@@ -16,7 +16,6 @@ DEFAULT_CLIENT_PORT = 12000
 serverName = ''
 serverPort = 0
 clientControlPort = 0
-clientTransferPort = 0
 
 def wrapPacket(command, payload):
     packet = {
@@ -49,10 +48,10 @@ def sendCommand(command, argument, conn):
         return True,response['payload']
     return False,response['payload']
 
-def openConnection(serverAddress, isTransfer = False):
+def openConnection(serverAddress):
     clientSocket = socket(AF_INET, SOCK_STREAM)
     clientSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-    clientPort = clientControlPort if not isTransfer else clientTransferPort
+    clientPort = clientControlPort
     clientSocket.bind(('0.0.0.0', clientPort))
     print(serverAddress)
     clientSocket.connect(serverAddress)
@@ -120,10 +119,8 @@ if __name__ == "__main__":
     except:
         pass
     clientControlPort = int(p or DEFAULT_CLIENT_PORT)
-    clientTransferPort = clientControlPort + 1
     print(" *** File Transfer System *** ")
     print("Control port: ", clientControlPort)
-    print("Transfer port: ",clientTransferPort)
     current_dir = '/'
     state = 'open'
     user = ''

@@ -8,30 +8,7 @@ import credentials
 import subprocess
 import base64
 
-
 DEFAULT_SERVER_PORT = 2121
-
-a = subprocess.check_output(["pwd"])
-# print(a.decode(),type(a))
-
-class globalRequests:
-    def __init__(self):
-        self.list = []
-
-    def add(self, ip, port, mode, filename):
-        self.list.append((ip,port,mode,filename))
-    
-    def get(self, ip, port):
-        for i in range(len(self.list)):
-            if self.list[i][0] == ip:
-                a = self.list[i][2]
-                b = self.list[i][3]
-                print(a,b)
-                del self.list[i]
-                return a,b,True 
-        return None, None, False
-
-gRequests = globalRequests()
 
 class Th(Thread):
     subtotal = 0
@@ -239,59 +216,11 @@ def receiveFile(conn, filename):
             packet = conn.recv(1024)
             packet = unwrapPacket(packet)
         f.close()
-        print("Finished {} kbytes".format(cont))
-
-
-class TransferWorker(Thread):
-    def __init__(self, addr, connection):
-        Thread.__init__(self)
-        self.conn = connection
-        self.addr = addr
-
-    def run(self):
-        mode, filename, ok = gRequests.get(self.addr[0], self.addr[1])
-        print(mode,filename)
-        if ok:
-            if mode == "upload":
-                self.receiveFile(self.conn, filename)
-                self.conn.close()
-            elif mode == "download":
-                self.sendFile(self.conn, filename)
-                self.conn.close()
-        else:
-            print("Error")
-
-    def sendFile(self, conn, filename):
-        print("Starting download...")
-        f = open(filename, 'rb')
-        chunk = f.read(1024)
-        cont = 0
-        while (chunk):
-            conn.send(chunk)
-            cont += 1
-            chunk = f.read(1024)
-        f.close()
-        print("Download finished...")
-    
-    def receiveFile(self, conn, filename):
-        with open(filename, 'wb') as f:
-            cont = 0
-            print('Receiving data...')
-            data = conn.recv(1024)
-            while data:
-                cont += 1
-                f.write(data)
-                data = conn.recv(1024)
-            f.close()
-            print("Finished {} kbytes".format(cont))
+        print("Finished {} kbytes".format(cont/2))
 
 def handleNewConnection(addr, connection):
     newThread = Th(addr, connection)
     newThread.start()
-
-def handleNewTransfer(addr, connection):
-    newWorker = TransferWorker(addr, connection)
-    newWorker.start()
 
 class CommandServer(Thread):
     def __init__(self):
@@ -310,29 +239,8 @@ class CommandServer(Thread):
             print("New connection established from {}".format(addr))
         serverSocket.close()
 
-
-class TransferServer(Thread):
-    def __init__(self):
-        Thread.__init__(self)
-
-    def run(self):
-        serverPort = DEFAULT_SERVER_PORT + 1
-        serverSocket = socket(AF_INET,SOCK_STREAM)
-        serverSocket.bind(('',serverPort))
-        serverSocket.listen(2)
-        print('TransferServer is running at port {}'.format(serverPort))
-        while runThreads:
-            connectionSocket, addr = serverSocket.accept()
-            handleNewTransfer(addr, connectionSocket)
-            print("New connection established from {} to transfer".format(addr))
-            
-        serverSocket.close()
-
 if __name__ == '__main__':
     runThreads = True
-    transferServer = TransferServer()
-    transferServer.daemon = True
-    transferServer.start()
 
     serverPort = DEFAULT_SERVER_PORT
     serverSocket = socket(AF_INET,SOCK_STREAM)
@@ -350,8 +258,3 @@ if __name__ == '__main__':
             serverSocket.close()
             runThreads = False
             break
-
-
-# commandServer = CommandServer()
-# commandServer.daemon = True
-# commandServer.start()
