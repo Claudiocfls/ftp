@@ -4,6 +4,7 @@ from socket import *
 import json
 import time
 import subprocess
+import  base64
 
 serverName = '0.0.0.0'
 serverPort = 12000
@@ -17,6 +18,18 @@ serverPort = 0
 clientControlPort = 0
 clientTransferPort = 0
 
+def wrapPacket(command, payload):
+    packet = {
+        'comm': command,
+        'arg': payload 
+    }
+    packet = json.dumps(packet)
+    return packet.encode()
+
+def unwrapPacket(packet):
+    a = packet.decode()
+    a = json.loads(a)
+    return a
 
 def promptCredentials():
     username = input("username: ")
@@ -45,34 +58,45 @@ def openConnection(serverAddress, isTransfer = False):
     clientSocket.connect(serverAddress)
     return clientSocket
 
-def receiveFile(filename):
-    transferSocket = openConnection((serverName, DEFAULT_SERVER_PORT+1), True)
+def receiveFile(filename, conn):
+    transferSocket = conn
+    packet = wrapPacket('SEND','')
     with open(filename, 'wb') as f:
         print('file opened')
         cont = 0
         print('receiving data...')
-        data = transferSocket.recv(1024)
-        while data:
+        transferSocket.send(packet)
+        packetRecv = transferSocket.recv(1024)
+        packetRecv = unwrapPacket(packetRecv)
+        while packetRecv['status'] == 'DATA':
             cont += 1
-            f.write(data)
-            data = transferSocket.recv(1024)
+            f.write(base64.decodebytes(packetRecv['payload'].encode()))
+            transferSocket.send(wrapPacket('OK',''))
+            packetRecv = transferSocket.recv(1024)
+            packetRecv = unwrapPacket(packetRecv)
+        print("servidor enviou status ", packetRecv['status'])
         f.close()
-        print("Finishid")
-    transferSocket.close()
+        print("Done")
 
-def sendFile(filename):
+def sendFile(filename, conn):
     print("Starting upload...")
-    transferSocket = openConnection((serverName, DEFAULT_SERVER_PORT+1), True)
+    transferSocket = conn
     f = open(filename,'rb')
-    chunk = f.read(1024)
+    conn.send(wrapPacket('PUTC',''))
+    conn.recv(1024)
+    chunk = f.read(512)
     cont = 0
     while (chunk):
-        transferSocket.send(chunk)
+        packet = wrapPacket('DATA', base64.encodebytes(chunk).decode())
+        transferSocket.send(packet)
+        res = transferSocket.recv(1024)
         cont += 1
-        chunk = f.read(1024)
+        chunk = f.read(512)
     f.close()
-    transferSocket.close()
-    print("Upload completed!", cont)
+    packet = wrapPacket('FIM','')
+    conn.send(packet)
+    res = conn.recv(1024).decode()
+    print("Upload completed!", cont, res)
 
 def nameIsPresent(filename):
     files = subprocess.check_output(["ls"]).decode().split('\n')
@@ -162,11 +186,11 @@ if __name__ == "__main__":
                 elif command == 'pwd' and res[0]:
                     print(res[1])
                 elif command == 'put':
-                    sendFile(argument)
+                    sendFile(argument, clientSocket)
                 elif command == 'cancel_put' and res[0]:
                     print(res[1])
                 elif command == 'get' and res[0]:
-                    receiveFile(argument)
+                    receiveFile(argument, clientSocket)
                 elif command == 'get':
                     print(res[1])
                 elif command == 'close' and res[0]:

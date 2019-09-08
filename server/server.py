@@ -6,6 +6,7 @@ import time
 import config
 import credentials
 import subprocess
+import base64
 
 
 DEFAULT_SERVER_PORT = 2121
@@ -60,6 +61,7 @@ class Th(Thread):
         self.state = 1
         self.client_pwd = '/'
         self.confirmation_state = 1
+        self.requestedFile = None
     
     def returnError(self, message):
         self.status = 'ER'
@@ -130,7 +132,11 @@ class Th(Thread):
                     else:
                         self.returnSuccess("File transfer with override")
                         self.confirmation_state = 1
-                        gRequests.add(self.addr[0], self.addr[1], "upload", self.mountPath(arg))
+                        self.requestedFile = self.mountPath(arg)
+                elif com == 'PUTC':
+                    receiveFile(self.conn, self.requestedFile)
+                    self.requestedFile = None
+                    self.returnSuccess('Transfer completed')
                 elif com == 'cancel_put':
                     self.confirmation_state = 1
                     self.returnSuccess('Upload aborted')
@@ -138,8 +144,12 @@ class Th(Thread):
                     if not self.nameIsPresent(arg):
                         self.returnError("File not found in remote server")
                     else:
-                        gRequests.add(self.addr[0], self.addr[1], "download", self.mountPath(arg))
-                        self.returnSuccess("Request queued")
+                        self.requestedFile = self.mountPath(arg)
+                        self.returnSuccess("Request completed")
+                elif com == 'SEND':
+                    sendFile(self.requestedFile, self.conn)
+                    self.returnSuccess('Transfer completed')
+                    self.requestedFile = None
                 elif com == 'delete':
                     if not self.nameIsPresent(arg):
                         self.returnError('File not found')
@@ -187,6 +197,50 @@ def receiveCommand(conn):
     a = json.loads(com)
     command,argument = a["comm"],a["arg"]
     return command,argument
+
+def wrapPacket(command, payload):
+    packet = {
+        'status': command,
+        'payload': payload 
+    }
+    packet = json.dumps(packet)
+    return packet.encode()
+
+def unwrapPacket(packet):
+    a = packet.decode()
+    a = json.loads(a)
+    return a
+
+def sendFile(filename, conn):
+    print("Starting download...")
+    f = open(filename, 'rb')
+    chunk = f.read(512)
+    cont = 0
+    while (chunk):
+        packet = wrapPacket('DATA', base64.encodebytes(chunk).decode())
+        conn.send(packet)
+        res = conn.recv(1024)
+        cont += 1
+        chunk = f.read(512)
+    f.close()
+    print("Download finished...")
+
+def receiveFile(conn, filename):
+    conn.send(wrapPacket('SEND', ''))
+    with open(filename, 'wb') as f:
+        cont = 0
+        print('Receiving data...')
+        packet = conn.recv(1024)
+        packet = unwrapPacket(packet)
+        while packet['comm'] == 'DATA':
+            cont += 1
+            f.write(base64.decodebytes(packet['arg'].encode()))
+            conn.send(wrapPacket('OK',''))
+            packet = conn.recv(1024)
+            packet = unwrapPacket(packet)
+        f.close()
+        print("Finished {} kbytes".format(cont))
+
 
 class TransferWorker(Thread):
     def __init__(self, addr, connection):
