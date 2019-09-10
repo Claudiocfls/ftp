@@ -17,6 +17,9 @@ serverName = ''
 serverPort = 0
 clientControlPort = 0
 
+ENDMARK = '  '
+END_OF_FILE = chr(0).encode()
+
 def wrapPacket(command, payload):
     packet = {
         'comm': command,
@@ -30,23 +33,67 @@ def unwrapPacket(packet):
     a = json.loads(a)
     return a
 
+def pad(string):
+    return string + ' ' if len(string)%2 else string
+
+def unpad(string):
+    if len(string):
+        return string[:-1] if string[-1] == ' ' else string
+    return ''
+
 def promptCredentials():
     username = input("username: ")
     passwd = getpass("password: ")
     return username+':'+passwd
 
-def sendCommand(command, argument, conn):
-    packet = {
-        'comm': command,
-        'arg': argument 
+def mapToSend(command):
+    rel = {
+        'cd': 'CD',
+        'ls': 'LS',
+        'rmdir': 'RM',
+        'mkdir': 'MK',
+        'delete': 'DL',
+        'pwd': 'PW',
+        'put': 'PT',
+        'get': 'GT',
+        'close': 'CL',
+        'quit': 'QT',
+        'login': 'LG',
+        'cancel_put': 'XP',
+        'forced_put': 'XT',
+        'send_file_now': 'SF',
+        'get_file_now': 'XG'
     }
-    packet = json.dumps(packet)
-    conn.sendall(packet.encode())
-    response = conn.recv(1024).decode()
-    response = json.loads(response)
-    if response['status'] == 'OK':
-        return True,response['payload']
-    return False,response['payload']
+    return rel[command]
+
+def sendCommand(command, argument, conn):
+    payload = pad(mapToSend(command)+argument)
+    while len(payload):
+        conn.send(payload[:2].encode())
+        conn.recv(51)
+        payload = payload[2:]
+    conn.send(ENDMARK.encode())
+    buffer = ''
+    while True:
+        a = conn.recv(51).decode()
+        if a == ENDMARK:
+            break
+        buffer += a
+        conn.send('OK'.encode())
+    status = buffer[:2]
+    response = unpad(buffer[2:])
+
+    if status == 'OK':
+        return True, response
+    return False, response
+
+def sendSignal(command, conn):
+    payload = mapToSend(command)
+    while len(payload):
+        conn.send(payload[:2].encode())
+        conn.recv(51)
+        payload = payload[2:]
+    conn.send(ENDMARK.encode())
 
 def openConnection(serverAddress):
     clientSocket = socket(AF_INET, SOCK_STREAM)
@@ -59,43 +106,47 @@ def openConnection(serverAddress):
 
 def receiveFile(filename, conn):
     transferSocket = conn
-    packet = wrapPacket('SEND','')
+    sendSignal('get_file_now', transferSocket)
     with open(filename, 'wb') as f:
-        print('file opened')
-        cont = 0
-        print('receiving data...')
-        transferSocket.send(packet)
-        packetRecv = transferSocket.recv(1024)
-        packetRecv = unwrapPacket(packetRecv)
-        while packetRecv['status'] == 'DATA':
-            cont += 1
-            f.write(base64.decodebytes(packetRecv['payload'].encode()))
-            transferSocket.send(wrapPacket('OK',''))
-            packetRecv = transferSocket.recv(1024)
-            packetRecv = unwrapPacket(packetRecv)
-        print("servidor enviou status ", packetRecv['status'])
+        print('Receiving data...')
+        chunk = transferSocket.recv(51)
+        while chunk != END_OF_FILE:
+            f.write(chunk)
+            transferSocket.send('OK'.encode())
+            chunk = transferSocket.recv(51)
         f.close()
         print("Done")
+    transferSocket.send('OK'.encode())
+    while True:
+        a = conn.recv(51).decode()
+        if a == ENDMARK:
+            break
+        conn.send('OK'.encode())
+
 
 def sendFile(filename, conn):
     print("Starting upload...")
     transferSocket = conn
+    sendSignal('send_file_now', transferSocket)
+    transferSocket.recv(51)
     f = open(filename,'rb')
-    conn.send(wrapPacket('PUTC',''))
-    conn.recv(1024)
-    chunk = f.read(512)
+    chunk = f.read(51)
     cont = 0
     while (chunk):
-        packet = wrapPacket('DATA', base64.encodebytes(chunk).decode())
-        transferSocket.send(packet)
-        res = transferSocket.recv(1024)
         cont += 1
-        chunk = f.read(512)
+        print(cont)
+        transferSocket.send(chunk)
+        transferSocket.recv(51)
+        chunk = f.read(51)
     f.close()
-    packet = wrapPacket('FIM','')
-    conn.send(packet)
-    res = conn.recv(1024).decode()
-    print("Upload completed!", cont, res)
+    
+    conn.send(END_OF_FILE)
+    while True:
+        a = conn.recv(51).decode()
+        if a == ENDMARK:
+            break
+        conn.send('OK'.encode())
+    print("Upload completed!")
 
 def nameIsPresent(filename):
     files = subprocess.check_output(["ls"]).decode().split('\n')
@@ -164,7 +215,9 @@ if __name__ == "__main__":
                 if not res[0]:
                     allow = askForConfirmationForOverride()
                     if not allow:
-                        command = 'cancel_put'
+                        command = None
+                    else:
+                        command = 'forced_put'
 
             if command:
                 res = sendCommand(command, argument, clientSocket)
@@ -182,7 +235,7 @@ if __name__ == "__main__":
                     print(res[1])
                 elif command == 'pwd' and res[0]:
                     print(res[1])
-                elif command == 'put':
+                elif command == 'put' or command == 'forced_put':
                     sendFile(argument, clientSocket)
                 elif command == 'cancel_put' and res[0]:
                     print(res[1])
