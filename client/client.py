@@ -46,6 +46,9 @@ def promptCredentials():
     passwd = getpass("password: ")
     return username+':'+passwd
 
+def isValidCommand(command):
+    return command in ['cd', 'ls', 'rmdir', 'mkdir', 'delete', 'pwd', 'put', 'get', 'close', 'quit']
+
 def mapToSend(command):
     rel = {
         'cd': 'CD',
@@ -59,10 +62,9 @@ def mapToSend(command):
         'close': 'CL',
         'quit': 'QT',
         'login': 'LG',
-        'cancel_put': 'XP',
-        'forced_put': 'XT',
+        'forced_put': 'FP',
         'send_file_now': 'SF',
-        'get_file_now': 'XG'
+        'get_file_now': 'GF'
     }
     return rel[command]
 
@@ -100,7 +102,7 @@ def openConnection(serverAddress):
     clientSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
     clientPort = clientControlPort
     clientSocket.bind(('0.0.0.0', clientPort))
-    print(serverAddress)
+    print("Connected to ",serverAddress)
     clientSocket.connect(serverAddress)
     return clientSocket
 
@@ -134,7 +136,6 @@ def sendFile(filename, conn):
     cont = 0
     while (chunk):
         cont += 1
-        print(cont)
         transferSocket.send(chunk)
         transferSocket.recv(51)
         chunk = f.read(51)
@@ -205,7 +206,10 @@ if __name__ == "__main__":
                 command,argument = a.split()
             except:
                 command,argument = a,""
-
+            argument = argument.strip()
+            if not isValidCommand(command):
+                print("Unknown command")
+                continue
             if command == 'get' and nameIsPresent(argument):
                 allow = askForConfirmationForOverride()
                 if not allow:
@@ -237,8 +241,6 @@ if __name__ == "__main__":
                     print(res[1])
                 elif command == 'put' or command == 'forced_put':
                     sendFile(argument, clientSocket)
-                elif command == 'cancel_put' and res[0]:
-                    print(res[1])
                 elif command == 'get' and res[0]:
                     receiveFile(argument, clientSocket)
                 elif command == 'get':
