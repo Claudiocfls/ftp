@@ -9,12 +9,13 @@ import subprocess
 import base64
 
 DEFAULT_SERVER_PORT = 2121
+SIMULTANEOUS_CONNECTIONS = 3
+ENDMARK = '  '
+END_OF_FILE = chr(0).encode()
 
 class Th(Thread):
     subtotal = 0
     def __init__ (self, addr, conn):
-        # sys.stdout.write("Making thread number " + str(num) + "n")
-        # sys.stdout.flush()
         Thread.__init__(self)
         self.conn = conn
         self.addr = addr
@@ -35,9 +36,8 @@ class Th(Thread):
         return path
 
     def resetConnection(self):
-        self.state = 1
+        self.state = 'not_logged'
         self.client_pwd = '/'
-        self.confirmation_state = 1
         self.requestedFile = None
     
     def returnError(self, message):
@@ -57,32 +57,32 @@ class Th(Thread):
     def run(self):
         while runThreads:
             com,arg = receiveCommand(self.conn)
-            if self.state == 1:
-                if com == 'login':
+            if self.state == 'not_logged':
+                if com == 'LG':
                     r = checkCredentials(arg)
                     if r:
                         self.returnSuccess(self.client_pwd)
-                        self.state = 3
+                        self.state = 'logged'
                     else:
                         self.returnError('Invalid credentials')
                 else:
                     self.returnError('Unexpected command')
-            elif self.state == 3:
-                if com == 'ls':
+            elif self.state == 'logged':
+                if com == 'LS':
                     if len(arg) and not self.nameIsPresent(arg):
                         self.returnError('Directory not found')
                     else:
                         lsResult = subprocess.check_output(["ls", self.mountPath(arg)]).decode()
                         self.returnSuccess(lsResult)
-                elif com == 'pwd':
+                elif com == 'PW':
                     self.returnSuccess(self.client_pwd)
-                elif com == 'mkdir':
+                elif com == 'MK':
                     if self.nameIsPresent(arg):
                         self.returnError("Folder already exist")
                     else:
                         subprocess.call(['mkdir', self.mountPath(arg)])
                         self.returnSuccess(arg)
-                elif com == 'cd':
+                elif com == 'CD':
                     if arg == '..' and self.client_pwd == '/':
                         self.returnError('Directory not found')
                     elif arg == '..':
@@ -102,59 +102,60 @@ class Th(Thread):
                         else:
                             self.client_pwd += '/' + arg
                             self.returnSuccess(self.client_pwd)
-                elif com == 'put':
-                    if self.nameIsPresent(arg) and self.confirmation_state == 1:
+                elif com == 'PT':
+                    if self.nameIsPresent(arg):
                         self.returnError("File already exist")
-                        self.confirmation_state = 2
                     else:
-                        self.returnSuccess("File transfer with override")
-                        self.confirmation_state = 1
                         self.requestedFile = self.mountPath(arg)
-                elif com == 'PUTC':
+                elif com == 'FP':
+                    self.requestedFile = self.mountPath(arg)
+                    if self.nameIsPresent(arg):
+                        self.returnSuccess("Transfer with overwrite")
+                    else:
+                        self.returnSuccess("Common transfer")
+                elif com == 'SF':
                     receiveFile(self.conn, self.requestedFile)
                     self.requestedFile = None
                     self.returnSuccess('Transfer completed')
-                elif com == 'cancel_put':
-                    self.confirmation_state = 1
-                    self.returnSuccess('Upload aborted')
-                elif com == 'get':
+                elif com == 'GT':
                     if not self.nameIsPresent(arg):
                         self.returnError("File not found in remote server")
                     else:
                         self.requestedFile = self.mountPath(arg)
                         self.returnSuccess("Request completed")
-                elif com == 'SEND':
+                elif com == 'GF':
                     sendFile(self.requestedFile, self.conn)
                     self.returnSuccess('Transfer completed')
                     self.requestedFile = None
-                elif com == 'delete':
+                elif com == 'DL':
                     if not self.nameIsPresent(arg):
                         self.returnError('File not found')
                     else:
                         a = subprocess.call(['rm', self.mountPath(arg)])
                         self.returnSuccess('File {} deleted!'.format(arg))
-                elif com == 'rmdir':
+                elif com == 'RM':
                     if not self.nameIsPresent(arg):
                         self.returnError('Folder not found')
                     else:
                         a = subprocess.call(['rm','-rf', self.mountPath(arg)])
                         self.returnSuccess('Directory deleted')
-                elif com == 'close':
+                elif com == 'CL':
                     self.resetConnection()
                     self.returnSuccess('Session closed')
-                    self.state = 4
-                elif com == 'quit':
+                    self.state = 'finish'
+                elif com == 'QT':
                     self.returnSuccess('Connection closed')
-                    self.state = 4
+                    self.state = 'finish'
                 else:
                     self.returnError('Unexpected command')
             
             res = self.createResponse()
             sendResponse(self.conn, res)
-            if self.state == 4:
+            if self.state == 'finish':
                 break
             
         if self.conn:
+            print("Closing connection {}".format(self.addr))
             self.conn.close()
 
 def checkCredentials(arg):
@@ -164,59 +165,60 @@ def checkCredentials(arg):
     return False
 
 def sendResponse(conn, res):
-    a = json.dumps(res)
-    conn.send(a.encode())
+    payload = pad(res["status"] + res["payload"])
+    while len(payload):
+        conn.send(payload[:2].encode())
+        conn.recv(51)
+        payload = payload[2:]
+    conn.send(ENDMARK.encode())
+
+def pad(string):
+    return string + ' ' if len(string)%2 else string
+
+def unpad(string):
+    if len(string):
+        return string[:-1] if string[-1] == ' ' else string
+    return ''
 
 def receiveCommand(conn):
-    print("recebendo comando")
-    com = conn.recv(1024).decode()
-    print("recebido: ",com)
-    a = json.loads(com)
-    command,argument = a["comm"],a["arg"]
-    return command,argument
+    buffer = ''
+    while True:
+        a = conn.recv(51).decode()
+        if a == ENDMARK:
+            break
+        conn.send('OK'.encode())
+        buffer += a
 
-def wrapPacket(command, payload):
-    packet = {
-        'status': command,
-        'payload': payload 
-    }
-    packet = json.dumps(packet)
-    return packet.encode()
+    command = buffer[:2]
+    argument = unpad(buffer[2:])
 
-def unwrapPacket(packet):
-    a = packet.decode()
-    a = json.loads(a)
-    return a
+    return command, argument
 
 def sendFile(filename, conn):
-    print("Starting download...")
+    print("Sending file...")
     f = open(filename, 'rb')
-    chunk = f.read(512)
-    cont = 0
+    chunk = f.read(51)
     while (chunk):
-        packet = wrapPacket('DATA', base64.encodebytes(chunk).decode())
-        conn.send(packet)
-        res = conn.recv(1024)
-        cont += 1
-        chunk = f.read(512)
+        conn.send(chunk)
+        conn.recv(51)
+        chunk = f.read(51)
     f.close()
-    print("Download finished...")
+    conn.send(END_OF_FILE)
+    conn.recv(51)
+    print("Transfer completed!")
 
 def receiveFile(conn, filename):
-    conn.send(wrapPacket('SEND', ''))
+    conn.send('SF'.encode())
     with open(filename, 'wb') as f:
         cont = 0
         print('Receiving data...')
-        packet = conn.recv(1024)
-        packet = unwrapPacket(packet)
-        while packet['comm'] == 'DATA':
-            cont += 1
-            f.write(base64.decodebytes(packet['arg'].encode()))
-            conn.send(wrapPacket('OK',''))
-            packet = conn.recv(1024)
-            packet = unwrapPacket(packet)
+        chunk = conn.recv(51)
+        while chunk != END_OF_FILE:
+            f.write(chunk)
+            conn.send('OK'.encode())
+            chunk = conn.recv(51)
         f.close()
-        print("Finished {} kbytes".format(cont/2))
+        print("Finished")
 
 def handleNewConnection(addr, connection):
     newThread = Th(addr, connection)
@@ -230,7 +232,7 @@ class CommandServer(Thread):
         serverPort = DEFAULT_SERVER_PORT
         serverSocket = socket(AF_INET,SOCK_STREAM)
         serverSocket.bind(('',serverPort))
-        serverSocket.listen(2)
+        serverSocket.listen(SIMULTANEOUS_CONNECTIONS)
         print('Server is running at port {}'.format(serverPort))
         while True:
             connectionSocket, addr = serverSocket.accept()
