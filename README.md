@@ -2,6 +2,10 @@
 
 Application developed for computer network classes to illustrate the mechanism of protocols on application layer.
 
+## Demo
+
+[![Watch the video](https://img.youtube.com/vi/wnoSbuX8ehs/maxresdefault.jpg)](https://www.youtube.com/watch?v=wnoSbuX8ehs)
+
 ## How to run
 
 The system contains two main files: server.py and client.py. Both can be run by using the following commands:
@@ -27,10 +31,6 @@ Two others files are imported by server.py: config.py and credentials.py. The fi
 * pwd 
 * get FILENAME
 * put FILENAME
-
-## Demo
-
-[![Watch the video](https://img.youtube.com/vi/wnoSbuX8ehs/maxresdefault.jpg)](https://www.youtube.com/watch?v=wnoSbuX8ehs)
 
 ## How the protocol works
 
