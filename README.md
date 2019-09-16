@@ -50,7 +50,7 @@ The file transfer has to be splitted as well. The "end of file" is identified du
 
 The following diagrams shows a overview of how the communication works. This diagrams are simplified because content messages are sent using a great amount of packets due to the split.
 
-![Sequence Diagram 1](https://github.com/Claudiocfls/ftp/tree/master/screenshots/seqdiagram1.png)
-![Sequence Diagram 2](https://github.com/Claudiocfls/ftp/tree/master/screenshots/seqdiagram2.png)
-![Sequence Diagram 3](https://github.com/Claudiocfls/ftp/tree/master/screenshots/seqdiagram3.png)
+![Sequence Diagram 1](https://raw.githubusercontent.com/Claudiocfls/ftp/tree/master/screenshots/seqdiagram1.png)
+![Sequence Diagram 2](https://raw.githubusercontent.com/Claudiocfls/ftp/tree/master/screenshots/seqdiagram2.png)
+![Sequence Diagram 3](https://raw.githubusercontent.com/Claudiocfls/ftp/tree/master/screenshots/seqdiagram3.png)
 
