@@ -50,7 +50,12 @@ The file transfer has to be splitted as well. The "end of file" is identified du
 
 The following diagrams shows a overview of how the communication works. This diagrams are simplified because content messages are sent using a great amount of packets due to the split.
 
-![Sequence Diagram 1](screenshots/seqdiagram1.png)
-![Sequence Diagram 2](screenshots/seqdiagram2.png)
-![Sequence Diagram 3](screenshots/seqdiagram3.png)
-
+<p align="center">
+    <img src="screenshots/seqdiagram1.png">
+</p>
+<p align="center">
+    <img src="screenshots/seqdiagram2.png">
+</p>
+<p align="center">
+    <img src="screenshots/seqdiagram3.png">
+</p>
